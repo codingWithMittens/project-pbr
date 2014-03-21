@@ -1,15 +1,17 @@
 #include "Arduino.h"
-#include <Adafruit_GPS.h>
-#include <SoftwareSerial.h>
+#include "Adafruit_GPS.h"
+#include "SoftwareSerial.h"
 #include "TinyGPS++.h"
 
-int green = 2;
-int red = 3;
-int yellow = 4;
-int stopDistanceCm = 25;
-int slowDistanceCm = 50;
-int readFrequency = 300;
+int const GREEN = 2;
+int const RED = 3;
+int const YELLOW = 4;
+int const STOP_DIST_CM = 25;
+int const SLOW_DIST_CM = 50;
+int const READ_FREQ_MS = 300;
+
 boolean usingInterrupt = false;
+
 void useInterrupt(boolean); // Func prototype keeps Arduino 0023 happy
 
 Adafruit_GPS GPS(&Serial1);
@@ -22,7 +24,6 @@ class Ultrasonic {
 		Ultrasonic(int pin);
     void DistanceMeasure(void);
 		long microsecondsToCentimeters(void);
-		long microsecondsToInches(void);
 	private:
 		int _pin; //pin number of Arduino that is connected with SIG pin of Ultrasonic Ranger.
     long duration; // the Pulse time received;
@@ -33,8 +34,7 @@ Ultrasonic::Ultrasonic(int pin) {
 }
 
 /*Begin the detection and get the pulse back signal*/
-void Ultrasonic::DistanceMeasure(void)
-{
+void Ultrasonic::DistanceMeasure(void) {
   pinMode(_pin, OUTPUT);
 	digitalWrite(_pin, LOW);
 	delayMicroseconds(2);
@@ -52,9 +52,9 @@ long Ultrasonic::microsecondsToCentimeters(void) {
 
 Ultrasonic ultrasonic(7);
 void setup() {
-	pinMode(green, OUTPUT);
-	pinMode(red, OUTPUT);
-	pinMode(yellow, OUTPUT);
+	pinMode(GREEN, OUTPUT);
+	pinMode(RED, OUTPUT);
+	pinMode(YELLOW, OUTPUT);
 	Serial.begin(9600);
   GPS.begin(9600);
   GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);    // Set the update rate: 1 Hz
@@ -100,13 +100,13 @@ void loop() {
 	printRangeInfo(RangeInCentimeters);
 	Serial.println();
 
-	delay(readFrequency);
+	delay(READ_FREQ_MS);
 }
 
 void updateSpeedIndicators(int pin) {
-	analogWrite(green, 0);
-	analogWrite(yellow, 0);
-	analogWrite(red, 0);
+	analogWrite(GREEN, 0);
+	analogWrite(YELLOW, 0);
+	analogWrite(RED, 0);
 	analogWrite(pin, 50);
 }
 
@@ -114,14 +114,14 @@ void printRangeInfo(int rangeCm) {
 	Serial.print(", ");
 	Serial.print(rangeCm);
 	Serial.print("cm, ");
-	if (rangeCm < stopDistanceCm) {
-		updateSpeedIndicators(red);
+	if (rangeCm < STOP_DIST_CM) {
+		updateSpeedIndicators(RED);
 		Serial.print("STOP!");
-	} else if (rangeCm < slowDistanceCm) {
-		updateSpeedIndicators(yellow);
+	} else if (rangeCm < SLOW_DIST_CM) {
+		updateSpeedIndicators(YELLOW);
 		Serial.print("SLOW...");
 	} else {
-		updateSpeedIndicators(green);
+		updateSpeedIndicators(GREEN);
 		Serial.print("BALLS TO THE WALL!");
 	}
 }
