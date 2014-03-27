@@ -3,30 +3,19 @@
 #include "SoftwareSerial.h"
 #include "TinyGPS++.h"
 
+// pins:
+int const GREEN_LEFT   = 2,  RED_LEFT     = 3,  YELLOW_LEFT = 4;
+int const GREEN_RIGHT  = 8,  RED_RIGHT    = 9,  YELLOW_RIGHT = 10;
+int const RANGE_LEFT   = 7,  RANGE_RIGHT  = 6;
+
+// configuration:
+int const STOP_DIST_CM = 25, SLOW_DIST_CM = 50, READ_FREQ_MS = 300;
+
 // Not configurable:
-// GPS_RX = 18
-// GPS_TX = 19
-
-int const GREEN_LEFT = 2;
-int const RED_LEFT = 3;
-int const YELLOW_LEFT = 4;
-int const GREEN_RIGHT = 8;
-int const RED_RIGHT = 9;
-int const YELLOW_RIGHT = 10;
-
-int const RANGE_LEFT = 7;
-int const RANGE_RIGHT = 6;
-
-int const STOP_DIST_CM = 25;
-int const SLOW_DIST_CM = 50;
-int const READ_FREQ_MS = 300;
-
-boolean usingInterrupt = false;
-
-void useInterrupt(boolean); // Func prototype keeps Arduino 0023 happy
+// GPS_RX = 18, GPS_TX = 19
 
 Adafruit_GPS GPS(&Serial1);
-#define GPSECHO  true // debug?
+// #define GPSECHO  false // debug?
 
 TinyGPSPlus gps;
 
@@ -36,15 +25,15 @@ class Ultrasonic {
     void DistanceMeasure(void);
 		long microsecondsToCentimeters(void);
 	private:
-		int _pin; //pin number of Arduino that is connected with SIG pin of Ultrasonic Ranger.
-    long duration; // the Pulse time received;
+		int _pin;
+    long duration;
 };
 
 Ultrasonic::Ultrasonic(int pin) {
 	_pin = pin;
 }
 
-/*Begin the detection and get the pulse back signal*/
+// Begin the detection and get the pulse back signal
 void Ultrasonic::DistanceMeasure(void) {
   pinMode(_pin, OUTPUT);
 	digitalWrite(_pin, LOW);
@@ -56,7 +45,7 @@ void Ultrasonic::DistanceMeasure(void) {
 	duration = pulseIn(_pin,HIGH);
 }
 
-/*The measured distance from the range 0 to 400 Centimeters*/
+// The measured distance from the range 0 to 400 Centimeters
 long Ultrasonic::microsecondsToCentimeters(void) {
 	return duration/29/2;
 }
@@ -73,54 +62,32 @@ void setup() {
   pinMode(RED_RIGHT, OUTPUT);
   pinMode(YELLOW_RIGHT, OUTPUT);
 
-	Serial.begin(9600);
+	Serial.begin(115200);
   GPS.begin(9600);
-  GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);    // Set the update rate: 1 Hz
-  useInterrupt(true);
+  GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ); // Set the update rate: 1 Hz
+  useInterrupt();
   delay(1000);
 }
 
-// Interrupt is called once a millisecond, looks for any new GPS data, and stores it
+// Interrupt is called once a millisecond, looks for any new GPS data, and feeds it to the encoder
 SIGNAL(TIMER0_COMPA_vect) {
   char c = GPS.read();
-  // if you want to debug, this is a good time to do it!
+  gps.encode(c);
 }
 
-void useInterrupt(boolean v) {
-  if (v) {
-    OCR0A = 0xAF;
-    TIMSK0 |= _BV(OCIE0A);
-    usingInterrupt = true;
-  }
+void useInterrupt() {
+  OCR0A = 0xAF;
+  TIMSK0 |= _BV(OCIE0A);
 }
 
 uint32_t timer = millis();
 
 void loop() {
-
-  if (GPS.newNMEAreceived()) {
-
-    char *lastNMEA = GPS.lastNMEA();
-
-    int len = strlen( lastNMEA );
-    for (int i = 0; i < len; i++){
-      gps.encode(lastNMEA[i]);
-    }
-
-    if (!GPS.parse(lastNMEA))   // this also sets the newNMEAreceived() flag to false
-      return;  // we can fail to parse a sentence in which case we should just wait for another
-  }
-
-  // if millis() or timer wraps around, we'll just reset it
-  if (timer > millis())  timer = millis();
-
-  if (millis() - timer > READ_FREQ_MS) {
-		if (GPS.fix) {
-			printGpsInfo();
-		} else {
-		  Serial.print("No Fix");
-		}
-
+	if (gps.location.isUpdated()) {
+    Serial.print("Passed Checksum:");
+    Serial.print(!gps.failedChecksum());
+    Serial.print("; ");
+		printGpsInfo();
     ultrasonic_right.DistanceMeasure(); // get the current signal time;
     ultrasonic_left.DistanceMeasure(); // get the current signal time;
 
@@ -130,18 +97,21 @@ void loop() {
 }
 
 void updateSpeedIndicators(int pin1, int pin2) {
+  lightsOut();
+  analogWrite(pin1, 50);
+  analogWrite(pin2, 50);
+}
+
+void lightsOut() {
   analogWrite(GREEN_LEFT, 0);
   analogWrite(YELLOW_LEFT, 0);
   analogWrite(RED_LEFT, 0);
   analogWrite(GREEN_RIGHT, 0);
   analogWrite(YELLOW_RIGHT, 0);
   analogWrite(RED_RIGHT, 0);
-  analogWrite(pin1, 50);
-  analogWrite(pin2, 50);
 }
 
 void printRangeInfo(long rangeCmL, long rangeCmR) {
-	Serial.print(", ");
 	Serial.print(rangeCmL);
 	Serial.print("cm, ");
 	if (rangeCmL < STOP_DIST_CM && rangeCmR < STOP_DIST_CM) {
@@ -169,14 +139,26 @@ void printRangeInfo(long rangeCmL, long rangeCmR) {
 }
 
 void printGpsInfo() {
-	Serial.print(GPS.latitude, 4);
-	Serial.print(GPS.lat);
-	Serial.print(", ");
-	Serial.print(GPS.longitude, 4);
-	Serial.print(GPS.lon);
-	Serial.print(", ");
-	Serial.print(GPS.speed);
-	Serial.print(" knots,  ");
-	Serial.print(GPS.angle);
-	Serial.print(" degrees");
+  Serial.print("; ");
+  Serial.print("Position: ");
+  Serial.print(gps.location.lat());
+  // Serial.println(gps.location.rawLatDegrees()); // Raw latitude in whole degrees (no work!)
+  // Serial.println(gps.location.rawLatBillionths()); // ... and billionths (i16/u32) (no work!)
+  Serial.print(", ");
+  Serial.print(gps.location.lng());
+  // Serial.println(gps.location.rawLngDegrees()); // Raw longitude in whole degrees (no work!)
+  // Serial.println(gps.location.rawLngBillionths()); // ... and billionths (i16/u32) (no work!)
+  Serial.print("(within ");
+  Serial.print(gps.hdop.value());
+  Serial.print("); ");
+  // Serial.println(gps.time.value()); // Raw time in HHMMSSCC format (u32) (keeping for last read calcs)
+  Serial.print("Speed (kph): ");
+  Serial.print(gps.speed.kmph());
+  Serial.print("; ");
+  Serial.print("Heading (deg): ");
+  Serial.print(gps.course.deg());
+  Serial.print("; ");
+  Serial.print("Altitude: ");
+  Serial.print(gps.altitude.kilometers());
+  Serial.print("; ");
 }
