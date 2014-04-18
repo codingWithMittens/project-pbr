@@ -5,23 +5,23 @@
 #include <Servo.h>
 
 // pins:
-int const GREEN_LEFT   = 2,  RED_LEFT      = 3,  YELLOW_LEFT  = 4;
-int const GREEN_RIGHT  = 8,  RED_RIGHT     = 9,  YELLOW_RIGHT = 10;
-int const RANGE_LEFT   = 7,  RANGE_RIGHT   = 6;
-int const MOTOR_FORWARD = 22,  MOTOR_REVERSE = 24, DUTY_CYCLE  = 13;
-int const SERVO = 11;
+int const GREEN_LEFT   = 2,  RED_LEFT      = 2,  YELLOW_LEFT  = 2;
+int const GREEN_RIGHT  = 2,  RED_RIGHT     = 2,  YELLOW_RIGHT = 2;
+int const RANGE_LEFT   = 7,  RANGE_RIGHT   = 8;
+int const MOTOR_FORWARD = 4, MOTOR_REVERSE = 6, DUTY_CYCLE  = 13;
+int const SERVO = 9;
 // Not configurable:
 // GPS_RX = 18, GPS_TX = 19
 
 // configuration:
-int const STOP_DIST_CM = 25, SLOW_DIST_CM = 50;
-int const READ_FREQ_MS = 300;
+int const STOP_DIST_CM = 75, SLOW_DIST_CM = 125;
+int const READ_FREQ_MS = 500;
 int const WAY_POINT_RADIUS_CM = 100;
 int const FORWARD = 1, STOP = 0, REVERSE = -1;
-int const STRAIGHT = 90, SOFT_LEFT = 105, SOFT_RIGHT = 75, HARD_LEFT = 125, HARD_RIGHT = 55;
+int const STRAIGHT = 90, SOFT_LEFT = 100, SOFT_RIGHT = 80, HARD_LEFT = 110, HARD_RIGHT = 80;
+int const MAX_SPEED = 50;
 
-float ROT;
-float DUTY;
+boolean MONITOR_OUTPUT_OVER_SERIAL = true;
 
 float wayPoints[7][2] = {
  {-105.154025, 39.924652},
@@ -34,6 +34,7 @@ float wayPoints[7][2] = {
 };
 
 int curWayPoint = 0;
+int curSpeed = 0;
 
 Adafruit_GPS GPS(&Serial1);
 // #define GPSECHO  false // debug?
@@ -43,60 +44,71 @@ Servo myservo;
 
 
 class Ultrasonic {
-	public:
-		Ultrasonic(int pin);
+  public:
+    Ultrasonic(int pin);
     void DistanceMeasure(void);
-		long microsecondsToCentimeters(void);
-	private:
-		int _pin;
+    long microsecondsToCentimeters(void);
+  private:
+    int _pin;
     long duration;
 };
 
 Ultrasonic::Ultrasonic(int pin) {
-	_pin = pin;
+  _pin = pin;
 }
 
 // Begin the detection and get the pulse back signal
 void Ultrasonic::DistanceMeasure(void) {
   pinMode(_pin, OUTPUT);
-	digitalWrite(_pin, LOW);
-	delayMicroseconds(2);
-	digitalWrite(_pin, HIGH);
-	delayMicroseconds(5);
-	digitalWrite(_pin, LOW);
-	pinMode(_pin, INPUT);
-	duration = pulseIn(_pin, HIGH);
+  digitalWrite(_pin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(_pin, HIGH);
+  delayMicroseconds(5);
+  digitalWrite(_pin, LOW);
+  pinMode(_pin, INPUT);
+  duration = pulseIn(_pin, HIGH);
 }
 
 // The measured distance from the range 0 to 400 Centimeters
 long Ultrasonic::microsecondsToCentimeters(void) {
-	return duration/29/2;
+  return duration/29/2;
 }
 
 Ultrasonic ultrasonic_left(RANGE_LEFT);
 Ultrasonic ultrasonic_right(RANGE_RIGHT);
 
 void setup() {
-	pinMode(GREEN_LEFT, OUTPUT);
-	pinMode(RED_LEFT, OUTPUT);
-	pinMode(YELLOW_LEFT, OUTPUT);
+  setPinModes();
+
+  if (MONITOR_OUTPUT_OVER_SERIAL) {
+    Serial.begin(115200);
+  }
+
+  initGPS();
+}
+
+void initGPS() {
+  GPS.begin(9600);
+  GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);
+  GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCONLY);
+  GPS.sendCommand("$PMTK301,1*2D");
+  useInterrupt();
+}
+
+void setPinModes() {
+  pinMode(GREEN_LEFT, OUTPUT);
+  pinMode(RED_LEFT, OUTPUT);
+  pinMode(YELLOW_LEFT, OUTPUT);
 
   pinMode(GREEN_RIGHT, OUTPUT);
   pinMode(RED_RIGHT, OUTPUT);
   pinMode(YELLOW_RIGHT, OUTPUT);
 
-  pinMode(MOTOR_FOWARD, OUTPUT);
+  pinMode(MOTOR_FORWARD, OUTPUT);
   pinMode(MOTOR_REVERSE, OUTPUT);
   pinMode(DUTY_CYCLE, OUTPUT);
 
   myservo.attach(SERVO);
-
-	Serial.begin(115200);
-  GPS.begin(9600);
-  GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ); // Set the update rate: 1 Hz
-  GPS.sendCommand("$PMTK301,1*2D");
-  useInterrupt();
-  delay(1000);
 }
 
 // Interrupt is called once a millisecond, looks for any new GPS data, and feeds it to the encoder
@@ -113,25 +125,31 @@ void useInterrupt() {
 uint32_t timer = millis();
 
 void loop() {
-	if (gps.location.isUpdated()) {
-    // Serial.println(GPS.lastNMEA());
-		printGpsInfo();
-    ultrasonic_right.DistanceMeasure(); // get the current signal time;
-    ultrasonic_left.DistanceMeasure(); // get the current signal time;
+  ultrasonic_right.DistanceMeasure(); // get the current signal time;
+  ultrasonic_left.DistanceMeasure(); // get the current signal time;
 
-    printRangeInfo(ultrasonic_left.microsecondsToCentimeters(), ultrasonic_right.microsecondsToCentimeters());
+  int distLeft = ultrasonic_left.microsecondsToCentimeters();
+  int distRight = ultrasonic_right.microsecondsToCentimeters();
+  int curSpeed = calculateSpeed(distLeft, distRight);
+  // if (gps.location.isUpdated()) {
+    // Serial.println(GPS.lastNMEA());
+    // printGpsInfo();
+
+    drive(curSpeed, 1);
+    // printRangeInfo(distLeft, distRight);
     Serial.println();
-	}
+  // }
 }
 
 void updateSpeedIndicators(int pin1, int pin2) {
-  lightsOut();
-  analogWrite(pin1, 50);
-  analogWrite(pin2, 50);
+  // lightsOut();
+  // analogWrite(pin1, 50);
+  // analogWrite(pin2, 50);
 }
 
 void drive(int dir, int speed) {
-  float duty = (speed / 100.00) * 255;
+  float duty = (speed / 10.00) * 255;
+  Serial.print(duty);
   boolean forward, reverse;
 
   if(dir == 1)  {
@@ -163,48 +181,64 @@ void lightsOut() {
   analogWrite(RED_RIGHT, 0);
 }
 
+int calculateSpeed(long rangeCmL, long rangeCmR) {
+  long nextObstacleCm = rangeCmL > rangeCmR ? rangeCmR : rangeCmL;
+  if (nextObstacleCm < SLOW_DIST_CM) {
+    curSpeed = MAX_SPEED * (nextObstacleCm / SLOW_DIST_CM);
+  } else {
+    curSpeed = MAX_SPEED;
+  }
+  return curSpeed;
+}
+
+int calculateDirection(long rangeCmL, long rangeCmR) {
+  long nextObstacleCm = rangeCmL > rangeCmR ? rangeCmR : rangeCmL;
+  long rangeDiff = abs(rangeCmL - rangeCmR);
+}
+
+
 void printRangeInfo(long rangeCmL, long rangeCmR) {
-	Serial.print("Dist L/R (cm): ");
+  Serial.print("Dist L/R (cm): ");
   Serial.print(rangeCmL);
-	Serial.print("/");
+  Serial.print("/");
   Serial.print(rangeCmL);
   Serial.print("; ");
-	if (rangeCmL < STOP_DIST_CM && rangeCmR < STOP_DIST_CM) {
+  if (rangeCmL < STOP_DIST_CM && rangeCmR < STOP_DIST_CM) {
     updateSpeedIndicators(RED_LEFT, RED_RIGHT);
     Serial.print("R");
-    drive(STOP, 0);
+    // drive(STOP, 0);
     steer(STRAIGHT);
   } else if (rangeCmR < STOP_DIST_CM && rangeCmL > STOP_DIST_CM) {
     updateSpeedIndicators(GREEN_LEFT, RED_RIGHT);
     Serial.print("HL");
-    drive(FORWARD, 20);
+    // drive(FORWARD, 10);
     steer(HARD_LEFT);
   } else if (rangeCmL < STOP_DIST_CM && rangeCmR > STOP_DIST_CM) {
-		updateSpeedIndicators(RED_LEFT, GREEN_RIGHT);
-		Serial.print("HR");
-    drive(FORWARD, 20);
+    updateSpeedIndicators(RED_LEFT, GREEN_RIGHT);
+    Serial.print("HR");
+    // drive(FORWARD, 10);
     steer(HARD_RIGHT);
   } else if (rangeCmL < SLOW_DIST_CM && rangeCmR < SLOW_DIST_CM) {
     updateSpeedIndicators(YELLOW_LEFT, YELLOW_RIGHT);
     Serial.print("S");
-    drive(REVERSE, 40);
+    // drive(REVERSE, 20);
     steer(STRAIGHT);
   } else if (rangeCmR < SLOW_DIST_CM && rangeCmL > SLOW_DIST_CM) {
     updateSpeedIndicators(GREEN_LEFT, YELLOW_RIGHT);
     Serial.print("EL");
-    drive(REVERSE, 40);
+    // drive(REVERSE, 20);
     steer(SOFT_LEFT);
   } else if (rangeCmL < SLOW_DIST_CM && rangeCmR > SLOW_DIST_CM) {
     updateSpeedIndicators(YELLOW_LEFT, GREEN_RIGHT);
     Serial.print("ER");
-    drive(REVERSE, 40);
+    // drive(REVERSE, 20);
     steer(SOFT_RIGHT);
-	} else {
-		updateSpeedIndicators(GREEN_LEFT, GREEN_RIGHT);
-		Serial.print("G");
-    drive(FORWARD, 60);
+  } else {
+    updateSpeedIndicators(GREEN_LEFT, GREEN_RIGHT);
+    Serial.print("G");
+    // drive(FORWARD, 50);
     steer(STRAIGHT);
-	}
+  }
 }
 
 void printGpsInfo() {
@@ -219,7 +253,7 @@ void printGpsInfo() {
   }
   Serial.print("; ");
 
-  Serial.print("Next WP: #");
+  Serial.print("WP#");
   Serial.print(curWayPoint);
   Serial.print(": ");
   Serial.print(wayPoints[curWayPoint][0], 6);
