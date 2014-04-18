@@ -14,12 +14,12 @@ int const SERVO = 9;
 // GPS_RX = 18, GPS_TX = 19
 
 // configuration:
-int const STOP_DIST_CM = 75, SLOW_DIST_CM = 125;
+double const STOP_DIST_CM = 75.0, SLOW_DIST_CM = 125.0, REVERSE_DIST_CM = 125.0;
 int const READ_FREQ_MS = 500;
 int const WAY_POINT_RADIUS_CM = 100;
 int const FORWARD = 1, STOP = 0, REVERSE = -1;
 int const STRAIGHT = 90, SOFT_LEFT = 100, SOFT_RIGHT = 80, HARD_LEFT = 110, HARD_RIGHT = 80;
-int const MAX_SPEED = 50;
+double const MAX_SPEED = 20.0;
 
 boolean MONITOR_OUTPUT_OVER_SERIAL = true;
 
@@ -35,6 +35,7 @@ float wayPoints[7][2] = {
 
 int curWayPoint = 0;
 int curSpeed = 0;
+int dir = 1;
 
 Adafruit_GPS GPS(&Serial1);
 // #define GPSECHO  false // debug?
@@ -126,19 +127,22 @@ uint32_t timer = millis();
 
 void loop() {
   ultrasonic_right.DistanceMeasure(); // get the current signal time;
-  ultrasonic_left.DistanceMeasure(); // get the current signal time;
+  long distLeft = ultrasonic_left.microsecondsToCentimeters();
 
-  int distLeft = ultrasonic_left.microsecondsToCentimeters();
-  int distRight = ultrasonic_right.microsecondsToCentimeters();
+  ultrasonic_left.DistanceMeasure(); // get the current signal time;
+  long distRight = ultrasonic_right.microsecondsToCentimeters();
+
   int curSpeed = calculateSpeed(distLeft, distRight);
+  Serial.print(curSpeed);
   // if (gps.location.isUpdated()) {
     // Serial.println(GPS.lastNMEA());
     // printGpsInfo();
+    dir = printRangeInfo(distLeft, distRight, dir);
+    drive(dir, curSpeed);
 
-    drive(curSpeed, 1);
-    // printRangeInfo(distLeft, distRight);
     Serial.println();
   // }
+  delay(100);
 }
 
 void updateSpeedIndicators(int pin1, int pin2) {
@@ -147,9 +151,10 @@ void updateSpeedIndicators(int pin1, int pin2) {
   // analogWrite(pin2, 50);
 }
 
-void drive(int dir, int speed) {
-  float duty = (speed / 10.00) * 255;
-  Serial.print(duty);
+void drive(int dir, int spd) {
+  // Serial.print("speed: ");
+  // Serial.println(spd);
+  float duty = (spd / 100.00) * 255.00;
   boolean forward, reverse;
 
   if(dir == 1)  {
@@ -158,6 +163,7 @@ void drive(int dir, int speed) {
   } else if(dir == -1) {
     forward = LOW;
     reverse = HIGH;
+    duty = 45;
   } else if(dir = 0) {
     forward = LOW;
     reverse = LOW;
@@ -181,14 +187,21 @@ void lightsOut() {
   analogWrite(RED_RIGHT, 0);
 }
 
-int calculateSpeed(long rangeCmL, long rangeCmR) {
-  long nextObstacleCm = rangeCmL > rangeCmR ? rangeCmR : rangeCmL;
-  if (nextObstacleCm < SLOW_DIST_CM) {
-    curSpeed = MAX_SPEED * (nextObstacleCm / SLOW_DIST_CM);
+double calculateSpeed(long rangeCmL, long rangeCmR) {
+  if (rangeCmL > rangeCmR) {
+    return speedFromDist(rangeCmR);
   } else {
-    curSpeed = MAX_SPEED;
+    return speedFromDist(rangeCmL);
   }
-  return curSpeed;
+}
+
+double speedFromDist(long nextObstacleCm) {
+  if (nextObstacleCm > SLOW_DIST_CM) {
+    return MAX_SPEED;
+  } else {
+    Serial.println(MAX_SPEED * (nextObstacleCm / SLOW_DIST_CM));
+    return MAX_SPEED * (nextObstacleCm / SLOW_DIST_CM);
+  }
 }
 
 int calculateDirection(long rangeCmL, long rangeCmR) {
@@ -197,48 +210,27 @@ int calculateDirection(long rangeCmL, long rangeCmR) {
 }
 
 
-void printRangeInfo(long rangeCmL, long rangeCmR) {
-  Serial.print("Dist L/R (cm): ");
-  Serial.print(rangeCmL);
-  Serial.print("/");
-  Serial.print(rangeCmL);
-  Serial.print("; ");
-  if (rangeCmL < STOP_DIST_CM && rangeCmR < STOP_DIST_CM) {
-    updateSpeedIndicators(RED_LEFT, RED_RIGHT);
-    Serial.print("R");
-    // drive(STOP, 0);
-    steer(STRAIGHT);
+int printRangeInfo(long rangeCmL, long rangeCmR, int curMode) {
+  if (curMode == -1 && (rangeCmL < REVERSE_DIST_CM) && (rangeCmR < REVERSE_DIST_CM)) {
+    steer(HARD_LEFT);
+    return -1;
+  } else if (rangeCmL < STOP_DIST_CM && rangeCmR < STOP_DIST_CM) {
+    steer(HARD_LEFT);
+    return -1;
   } else if (rangeCmR < STOP_DIST_CM && rangeCmL > STOP_DIST_CM) {
-    updateSpeedIndicators(GREEN_LEFT, RED_RIGHT);
-    Serial.print("HL");
-    // drive(FORWARD, 10);
     steer(HARD_LEFT);
   } else if (rangeCmL < STOP_DIST_CM && rangeCmR > STOP_DIST_CM) {
-    updateSpeedIndicators(RED_LEFT, GREEN_RIGHT);
-    Serial.print("HR");
-    // drive(FORWARD, 10);
     steer(HARD_RIGHT);
   } else if (rangeCmL < SLOW_DIST_CM && rangeCmR < SLOW_DIST_CM) {
-    updateSpeedIndicators(YELLOW_LEFT, YELLOW_RIGHT);
-    Serial.print("S");
-    // drive(REVERSE, 20);
     steer(STRAIGHT);
   } else if (rangeCmR < SLOW_DIST_CM && rangeCmL > SLOW_DIST_CM) {
-    updateSpeedIndicators(GREEN_LEFT, YELLOW_RIGHT);
-    Serial.print("EL");
-    // drive(REVERSE, 20);
-    steer(SOFT_LEFT);
+    steer(HARD_LEFT);
   } else if (rangeCmL < SLOW_DIST_CM && rangeCmR > SLOW_DIST_CM) {
-    updateSpeedIndicators(YELLOW_LEFT, GREEN_RIGHT);
-    Serial.print("ER");
-    // drive(REVERSE, 20);
-    steer(SOFT_RIGHT);
+    steer(HARD_RIGHT);
   } else {
-    updateSpeedIndicators(GREEN_LEFT, GREEN_RIGHT);
-    Serial.print("G");
-    // drive(FORWARD, 50);
     steer(STRAIGHT);
   }
+  return 1;
 }
 
 void printGpsInfo() {
