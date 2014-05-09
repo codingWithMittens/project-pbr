@@ -18,7 +18,7 @@ double const STOP_DIST_CM = 75.0, SLOW_DIST_CM = 125.0, REVERSE_DIST_CM = 125.0;
 int const READ_FREQ_MS = 500;
 int const WAY_POINT_RADIUS_CM = 100;
 int const FORWARD = 1, STOP = 0, REVERSE = -1;
-int const STRAIGHT = 90, SOFT_LEFT = 100, SOFT_RIGHT = 80, HARD_LEFT = 110, HARD_RIGHT = 80;
+int const STRAIGHT = 90, SOFT_TURN = 10, HARD_TURN = 20;
 double const MAX_SPEED = 20.0;
 
 boolean MONITOR_OUTPUT_OVER_SERIAL = true;
@@ -133,13 +133,14 @@ void loop() {
   long distRight = ultrasonic_right.microsecondsToCentimeters();
 
   int curSpeed = calculateSpeed(distLeft, distRight);
-  Serial.print(curSpeed);
+  // Serial.print(curSpeed);
   // if (gps.location.isUpdated()) {
     // Serial.println(GPS.lastNMEA());
     // printGpsInfo();
-    dir = printRangeInfo(distLeft, distRight, dir);
-    drive(dir, curSpeed);
-
+    // dir = printRangeInfo(distLeft, distRight, dir);
+    int angle = calculateDirection(distLeft, distRight);
+    drive(1, curSpeed, angle);
+    Serial.print(angle);
     Serial.println();
   // }
   delay(100);
@@ -151,7 +152,7 @@ void updateSpeedIndicators(int pin1, int pin2) {
   // analogWrite(pin2, 50);
 }
 
-void drive(int dir, int spd) {
+void drive(int dir, int spd, int degr) {
   // Serial.print("speed: ");
   // Serial.println(spd);
   float duty = (spd / 100.00) * 255.00;
@@ -169,6 +170,7 @@ void drive(int dir, int spd) {
     reverse = LOW;
   }
 
+  steer(degr);
   digitalWrite(MOTOR_FORWARD, forward);
   digitalWrite(MOTOR_REVERSE, reverse);
   analogWrite(DUTY_CYCLE, duty);
@@ -199,82 +201,87 @@ double speedFromDist(long nextObstacleCm) {
   if (nextObstacleCm > SLOW_DIST_CM) {
     return MAX_SPEED;
   } else {
-    Serial.println(MAX_SPEED * (nextObstacleCm / SLOW_DIST_CM));
+    // Serial.println(MAX_SPEED * (nextObstacleCm / SLOW_DIST_CM));
     return MAX_SPEED * (nextObstacleCm / SLOW_DIST_CM);
   }
 }
 
 int calculateDirection(long rangeCmL, long rangeCmR) {
-  long nextObstacleCm = rangeCmL > rangeCmR ? rangeCmR : rangeCmL;
-  long rangeDiff = abs(rangeCmL - rangeCmR);
-}
-
-
-int printRangeInfo(long rangeCmL, long rangeCmR, int curMode) {
-  if (curMode == -1 && (rangeCmL < REVERSE_DIST_CM) && (rangeCmR < REVERSE_DIST_CM)) {
-    steer(HARD_LEFT);
-    return -1;
-  } else if (rangeCmL < STOP_DIST_CM && rangeCmR < STOP_DIST_CM) {
-    steer(HARD_LEFT);
-    return -1;
-  } else if (rangeCmR < STOP_DIST_CM && rangeCmL > STOP_DIST_CM) {
-    steer(HARD_LEFT);
-  } else if (rangeCmL < STOP_DIST_CM && rangeCmR > STOP_DIST_CM) {
-    steer(HARD_RIGHT);
-  } else if (rangeCmL < SLOW_DIST_CM && rangeCmR < SLOW_DIST_CM) {
-    steer(STRAIGHT);
-  } else if (rangeCmR < SLOW_DIST_CM && rangeCmL > SLOW_DIST_CM) {
-    steer(HARD_LEFT);
-  } else if (rangeCmL < SLOW_DIST_CM && rangeCmR > SLOW_DIST_CM) {
-    steer(HARD_RIGHT);
+  long nextObstacleCm = (rangeCmL > rangeCmR) ? rangeCmR : rangeCmL;
+  // long rangeDiff = fabs(rangeCmL - rangeCmR);
+  long nextObjDir = rangeCmL > rangeCmR ? -1 : 1;
+  if (nextObstacleCm < SLOW_DIST_CM) {
+    return STRAIGHT + ((HARD_TURN * ((SLOW_DIST_CM - nextObstacleCm) / SLOW_DIST_CM)) * nextObjDir);
   } else {
-    steer(STRAIGHT);
+    return STRAIGHT;
   }
-  return 1;
 }
 
-void printGpsInfo() {
-  // static const double LONDON_LAT = 51.508131, LONDON_LON = -0.128002;
-  // double distanceToLondon = TinyGPSPlus::distanceBetween(gps.location.lat(), gps.location.lng(), LONDON_LAT, LONDON_LON);
-  // double courseToLondon = TinyGPSPlus::courseTo(gps.location.lat(), gps.location.lng(), LONDON_LAT, LONDON_LON);
-  Serial.print("Checksum:");
-  if (gps.failedChecksum()) {
-    Serial.print("ok");
-  } else {
-    Serial.print("fail");
-  }
-  Serial.print("; ");
+// int printRangeInfo(long rangeCmL, long rangeCmR, int curMode) {
+//   if (curMode == -1 && (rangeCmL < REVERSE_DIST_CM) && (rangeCmR < REVERSE_DIST_CM)) {
+//     steer(HARD_LEFT);
+//     return -1;
+//   } else if (rangeCmL < STOP_DIST_CM && rangeCmR < STOP_DIST_CM) {
+//     steer(HARD_LEFT);
+//     return -1;
+//   } else if (rangeCmR < STOP_DIST_CM && rangeCmL > STOP_DIST_CM) {
+//     steer(HARD_LEFT);
+//   } else if (rangeCmL < STOP_DIST_CM && rangeCmR > STOP_DIST_CM) {
+//     steer(HARD_RIGHT);
+//   } else if (rangeCmL < SLOW_DIST_CM && rangeCmR < SLOW_DIST_CM) {
+//     steer(STRAIGHT);
+//   } else if (rangeCmR < SLOW_DIST_CM && rangeCmL > SLOW_DIST_CM) {
+//     steer(HARD_LEFT);
+//   } else if (rangeCmL < SLOW_DIST_CM && rangeCmR > SLOW_DIST_CM) {
+//     steer(HARD_RIGHT);
+//   } else {
+//     steer(STRAIGHT);
+//   }
+//   return 1;
+// }
 
-  Serial.print("WP#");
-  Serial.print(curWayPoint);
-  Serial.print(": ");
-  Serial.print(wayPoints[curWayPoint][0], 6);
-  Serial.print(", ");
-  Serial.print(wayPoints[curWayPoint][1], 6);
-  Serial.print("; ");
+// void printGpsInfo() {
+//   // static const double LONDON_LAT = 51.508131, LONDON_LON = -0.128002;
+//   // double distanceToLondon = TinyGPSPlus::distanceBetween(gps.location.lat(), gps.location.lng(), LONDON_LAT, LONDON_LON);
+//   // double courseToLondon = TinyGPSPlus::courseTo(gps.location.lat(), gps.location.lng(), LONDON_LAT, LONDON_LON);
+//   Serial.print("Checksum:");
+//   if (gps.failedChecksum()) {
+//     Serial.print("ok");
+//   } else {
+//     Serial.print("fail");
+//   }
+//   Serial.print("; ");
 
-  Serial.print("Dist (m):");
-  Serial.print(distToWayPoint());
-  Serial.print("; ");
+//   Serial.print("WP#");
+//   Serial.print(curWayPoint);
+//   Serial.print(": ");
+//   Serial.print(wayPoints[curWayPoint][0], 6);
+//   Serial.print(", ");
+//   Serial.print(wayPoints[curWayPoint][1], 6);
+//   Serial.print("; ");
 
-  Serial.print("Course (deg):");
-  Serial.print(courseToWayPoint());
-  Serial.print("; ");
+//   Serial.print("Dist (m):");
+//   Serial.print(distToWayPoint());
+//   Serial.print("; ");
 
-  Serial.print("Heading (deg): ");
-  Serial.print(gps.course.deg());
-  Serial.print("; ");
+//   Serial.print("Course (deg):");
+//   Serial.print(courseToWayPoint());
+//   Serial.print("; ");
 
-  Serial.print("Position: ");
-  Serial.print(gps.location.lat(), 6);
-  Serial.print(", ");
-  Serial.print(gps.location.lng(), 6);
-  Serial.print("; ");
+//   Serial.print("Heading (deg): ");
+//   Serial.print(gps.course.deg());
+//   Serial.print("; ");
 
-  Serial.print("Speed (kph): ");
-  Serial.print(gps.speed.kmph());
-  Serial.print("; ");
-}
+//   Serial.print("Position: ");
+//   Serial.print(gps.location.lat(), 6);
+//   Serial.print(", ");
+//   Serial.print(gps.location.lng(), 6);
+//   Serial.print("; ");
+
+//   Serial.print("Speed (kph): ");
+//   Serial.print(gps.speed.kmph());
+//   Serial.print("; ");
+// }
 
 boolean achievementUnlocked() {
   if(distToWayPoint() < WAY_POINT_RADIUS_CM) {
