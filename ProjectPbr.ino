@@ -23,15 +23,6 @@ int const FORWARD = 1, STOP = 0, REVERSE = -1;
 int const STRAIGHT = 90, SOFT_TURN = 10, HARD_TURN = 20;
 double const MAX_SPEED = 20.0;
 
-double lastLat = 39.924053;
-double lastLon = -105.153152;
-double newLat = 0.0;
-double newLon = 0.0;
-
-double DIFF_thresh = 1; //0.0001;
-double gpsdiff_lat = 0.0;
-double gpsdiff_lon = 0.0;
-
 int const WAY_POINT_RADIUS_M = 10;
 
 float wayPoints[7][2] = {
@@ -46,8 +37,20 @@ int curWayPoint = 0;
 double nextLat = wayPoints[curWayPoint][0];
 double nextLon = wayPoints[curWayPoint][1];
 
+long obsCmLeft;
+long obsCmRight;
 int curSpeed = 0;
+int angle = STRAIGHT;
 int dir = 1;
+
+double lastLat = 39.924053;
+double lastLon = -105.153152;
+double curLat = 0.0;
+double curLng = 0.0;
+
+double DIFF_THRESH = 1; //0.0001;
+double gpsdiffLat = 0.0;
+double gpsdiffLng = 0.0;
 
 Adafruit_GPS GPS(&Serial1);
 // #define GPSECHO  false // debug?
@@ -95,41 +98,45 @@ void useInterrupt() {
 uint32_t timer = millis();
 
 void loop() {
-  filterGPS();
-  measureDistance();
+  updateGps();
+  printGpsInfo();
+  checkAchievementStatus();
+  measureObsDistance();
+  distToWayPointM();
+  double correctCourse = courseDiff(gps.course.deg(), courseToWayPoint());
+  Serial.print(", correctCourse: ");
+  Serial.print(correctCourse);
 
-  long distLeft = ultrasonic_left.microsecondsToCentimeters();
-  long distRight = ultrasonic_right.microsecondsToCentimeters();
-  int curSpeed = calculateSpeed(distLeft, distRight);
-  int angle = calculateDirection(distLeft, distRight);
-
-  drive(1, curSpeed, angle);
+  drive(1, 10, correctCourse);
+  // drive(1, curSpeed, angle);
 
   delay(100);
+  Serial.println();
 }
 
-void measureDistance() {
+void measureObsDistance() {
   ultrasonic_right.DistanceMeasure(); // get the current signal time;
   ultrasonic_left.DistanceMeasure(); // get the current signal time;
+
+  obsCmLeft = ultrasonic_left.microsecondsToCentimeters();
+  obsCmRight = ultrasonic_right.microsecondsToCentimeters();
+  curSpeed = calculateSpeed(obsCmLeft, obsCmRight);
+  angle = calculateDirection(obsCmLeft, obsCmRight);
 }
 
-void filterGPS() {
+void updateGps() {
   if (gps.location.isUpdated()){       //Looks for new GPS to start loop
-    newLat = (gps.location.lat());    //assigns newly updated latitude to "new_lat" variable
-    newLon = (gps.location.lng());   // assigns newly updated longitude to "new_long" variable
+    curLat = (gps.location.lat());    //assigns newly updated latitude to "curLat" variable
+    curLng = (gps.location.lng());   // assigns newly updated longitude to "newLngg" variable
 
-    gpsdiff_lat = (lastLat - newLat);   // calculate distance between last accepted coordinates and new coordinates
-    gpsdiff_lon = (lastLon - newLon);
+    gpsdiffLat = (lastLat - curLat);   // calculate distance between last accepted coordinates and new coordinates
+    gpsdiffLng = (lastLon - curLng);
 
     //Check to see if new coordinates are close enough to the last
-    if ( (gpsdiff_lat < DIFF_thresh) && (gpsdiff_lon < DIFF_thresh) &&
-        (gpsdiff_lat > -1 * DIFF_thresh) && (gpsdiff_lon > -1 * DIFF_thresh)) {
-      lastLat = newLat;  //designates new coordinates as accepted.
-      lastLon = newLon;
-
-      printGpsInfo();
-      achievementStatus();
-      Serial.println();
+    if ( (gpsdiffLat < DIFF_THRESH) && (gpsdiffLng < DIFF_THRESH) &&
+        (gpsdiffLat > -1 * DIFF_THRESH) && (gpsdiffLng > -1 * DIFF_THRESH)) {
+      lastLat = curLat;  //designates new coordinates as accepted.
+      lastLon = curLng;
     }
   }
 }
@@ -162,6 +169,17 @@ void steer(int pos_deg) {
   myservo.write(pos_deg);
 }
 
+double courseDiff(double curAngle, double destAngle) {
+  double diff = destAngle - curAngle;
+  double absDiff = abs(diff);
+
+  if (destAngle > curAngle) {
+    return absDiff - 360;
+  } else {
+    return 360 - absDiff;
+  }
+}
+
 double calculateSpeed(long rangeCmL, long rangeCmR) {
   if (rangeCmL > rangeCmR) {
     return speedFromDist(rangeCmR);
@@ -190,7 +208,7 @@ int calculateDirection(long rangeCmL, long rangeCmR) {
   }
 }
 
-boolean achievementStatus() {
+boolean checkAchievementStatus() {
   if(distToWayPointM() < WAY_POINT_RADIUS_M) {
     curWayPoint += 1;
     nextLat = wayPoints[curWayPoint][0];
@@ -211,22 +229,12 @@ long courseToWayPoint() {
 
 // logging //
 void printGpsInfo() {
-  Serial.print("Lat, Long): ");
-  Serial.print(lastLat , 6);
-  Serial.print(", ");
-  Serial.print(lastLon, 6);
-  Serial.print(", Unlocked?:");
-  Serial.print(achievementStatus());
-  Serial.print(", Cur Waypoint #:");
-  Serial.print(curWayPoint);
-  Serial.print(", Distance2WP:");
-  Serial.print(distToWayPointM());
-
-  Serial.print(", WP Lat, WP Long): ");
-  Serial.print(nextLat, 6);
-  Serial.print(", ");
-  Serial.print(nextLon, 6);
-  Serial.print(", Deg: ");
-  Serial.print(courseToWayPoint());
+  Serial.print("Lat, Long): "); Serial.print(curLat , 6); Serial.print(", "); Serial.print(curLng, 6);
+  Serial.print(", WP Lat, WP Long): "); Serial.print(nextLat, 6); Serial.print(", "); Serial.print(nextLon, 6);
+  Serial.print(", Unlocked?:"); Serial.print(checkAchievementStatus());
+  Serial.print(", WP#:"); Serial.print(curWayPoint);
+  Serial.print(", Dist2WP:"); Serial.print(distToWayPointM());
+  Serial.print(", Cur Angle:"); Serial.print(gps.course.deg());
+  Serial.print(", Angle2WP: "); Serial.print(courseToWayPoint());
 }
 
