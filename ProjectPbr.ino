@@ -27,7 +27,14 @@ int const READ_FREQ_MS = 500;
 int const WAY_POINT_RADIUS_CM = 1;
 int const FORWARD = 1, STOP = 0, REVERSE = -1;
 int const STRAIGHT = 130, SOFT_TURN = 10, HARD_TURN = 20;
+int const MIN_STEER_DIFF = 5;
 double const MAX_SPEED = 20.0;
+
+// dist and angle calculations
+float const LAT_TO_METERS = 111034.0, LNG_TO_METERS = 85393.0;
+float const Y_SCALE = 0.00926, X_SCALE = 0.0118;
+int const Y_OFF = 1456, X_OFF = -1621;
+
 
 int const WAY_POINT_RADIUS_M = 10; //
 
@@ -88,22 +95,6 @@ double gpsdiffLng = 0.0;
 ///////////////////--compass stuff--////
 #define MAG_ADDR  0x0E //7-bit address for the MAG3110, doesn't change
 
-int Yraw ;
-int  const Yoff = 1456;
-float const Yscale = 0.00926 ;
-float Ycal = 1.0 ;
-
-
-int Xraw ;
-int const Xoff = -1621;
-float const Xscale = 0.0118;
-float Xcal = 1.0;
-
-double Nangle;
-///////
-float const LatToMeters = 111034.0;
-float const LongToMeters = 85393.0 ; //meters per degree longitude
-
 float NextVectorX;
 float NextVectorY;
 
@@ -149,7 +140,7 @@ void setup() {
 void initComp(){
   Wire.begin();        // join i2c bus (address optional for master)
   Serial.begin(9600);  // start serial for output
-  config();            // turn the MAG3110 on
+  initCompass();            // turn the MAG3110 on
 }
 ////////////////
 void initGPS() {
@@ -184,82 +175,47 @@ uint32_t timer = millis();
 
 void loop() {
   updateGps();
-  //printGpsInfo();
   checkAchievementStatus();
 
- // measureObsDistance();
-//  distToWayPointM();
- // double correctCourse = courseDiff(gps.course.deg(), courseToWayPoint());
-//  Serial.print(", correctCourse: ");
-//  Serial.print(correctCourse);
+  // measureObsDistance();
+  //  distToWayPointM();
+  // double correctCourse = courseDiff(gps.course.deg(), courseToWayPoint());
 
-  drive(1, 25, Steering);
-  // drive(1, curSpeed, angle);
-
-////////////////////--compass stuff--////////////////////////////////////////
-
-  print_values();
-
-  Yraw = readY();
-
-  Ycal = (Yraw - Yoff)*Yscale;
-
-  Xraw = readX();
-
-  Xcal = (Xraw - Xoff)*Xscale;
-  Nangle = atan2(Xcal,Ycal)*(180/3.14);
- delay (20);
-
-    ///next angle//
-    //////////////// Angle Calc /////////////////////////////////////////////////
-
-    NextVectorX = LongToMeters*(nextLon - lastLon);
-    NextVectorY = LatToMeters*(nextLat - lastLat);
-
-    distToNext = sqrt(square(NextVectorY) + square(NextVectorX)); //distance in meters from current position to next way point
-
-    MagComp =  sqrt(square(Xcal) + square(Ycal)); //Magnitude of compass vector for finding angle
-    CompDotNext = (-1*Xcal * NextVectorX) + (Ycal * NextVectorY);   // Dot product of next vector and current direction(negative 1 multiply is because compass reading is “how many degrees  NORTH is FROM CAR pointing direction, we want how many degree car is FROM NORTH we are pointing)..
-
-    AngleNext = acos (CompDotNext/(MagComp*distToNext))*180/3.14; // //     ---Cos^-1((A*B)/||A|| ||B||)--- Magnitude of angle(in radians to next way point from current direction car is pointed.
-
-    DirectionNext =  ((Ycal*NextVectorX) - (Xcal*NextVectorY)) ; //if negative turn left, if positive turn right //if negative turn left, if positive turn right
-    DirectionNext = DirectionNext / fabs(DirectionNext) * -1;
-
-    if (AngleNext > 5){
-      angleFromStraight =  DirectionNext * AngleNext; //copysign( AngleNext, DirectionNext-12 );
-
-      //   Steering =  constrain(90 + angleFromStraight, LeftLimit, RightLimit);  //returns the servo output based on direction of next target within the limits set for max steering angle.
-
-      Steering = STRAIGHT + angleFromStraight;
-
-      if (Steering > (STRAIGHT + HARD_TURN)) {
-        Steering = STRAIGHT + HARD_TURN;
-      }
-      if (Steering < (STRAIGHT - HARD_TURN)) {
-        Steering = STRAIGHT - HARD_TURN;
-      }
-    } else {
-      Steering = STRAIGHT;
-    }
-
-///////////////////////////////////////////////////////////////////
-      delay(50);
-      Serial.println();
-    }
+  drive(1, 25, angleToWP());
+  logOutput();
+  delay(50);
+  Serial.println();
+}
 
 
+int angleToWP() {
+  double yCal = (readY() - Y_OFF) * Y_SCALE;
+  double xCal = (readX() - X_OFF) * X_SCALE;
 
+  delay(20);
 
-//void measureObsDistance() {
-//  ultrasonic_right.DistanceMeasure(); // get the current signal time;
-//  ultrasonic_left.DistanceMeasure(); // get the current signal time;
-//
-//  obsCmLeft = ultrasonic_left.microsecondsToCentimeters();
-//  obsCmRight = ultrasonic_right.microsecondsToCentimeters();
-//  curSpeed = calculateSpeed(obsCmLeft, obsCmRight);
-//  angle = calculateDirection(obsCmLeft, obsCmRight);
-//}
+  NextVectorX = LNG_TO_METERS * (nextLon - lastLon);
+  NextVectorY = LAT_TO_METERS * (nextLat - lastLat);
+
+  //distance in meters from current position to next way point
+  distToNext = sqrt(square(NextVectorY) + square(NextVectorX));
+
+  //Magnitude of compass vector for finding angle
+  MagComp =  sqrt(square(xCal) + square(yCal));
+
+  // Dot product of next vector and current direction(negative 1 multiply is because compass reading is “how many degrees  NORTH is FROM CAR pointing direction, we want how many degree car is FROM NORTH we are pointing)..
+  CompDotNext = (-1 * xCal * NextVectorX) + (yCal * NextVectorY);
+
+  // Cos^-1((A*B)/||A|| ||B||)--- Magnitude of angle(in radians to next way point from current direction car is pointed.
+  AngleNext = acos(CompDotNext/(MagComp*distToNext)) * 180 / 3.14;
+
+  //if negative turn left, if positive turn right //if negative turn left, if positive turn right
+  DirectionNext = ((xCal * NextVectorX) - (yCal * NextVectorY));
+  DirectionNext = DirectionNext / abs(DirectionNext) * -1;
+
+  //copysign( AngleNext, DirectionNext-12 );
+  return STRAIGHT + (DirectionNext * AngleNext);
+}
 
 void updateGps() {
  if (gps.location.isUpdated()){ //Looks for new GPS to start loop
@@ -277,9 +233,9 @@ void updateGps() {
    }
  }
 }
-////OUTOPPUT TO CAR/////
 
-void drive(int dir, int spd, int degr) {
+////OUTPUT TO CAR/////
+void drive(int dir, int spd, int degree) {
   // Serial.print("speed: ");
   // Serial.println(spd);
   float duty = (spd / 100.00) * 255.00;
@@ -297,15 +253,22 @@ void drive(int dir, int spd, int degr) {
     reverse = LOW;
   }
 
-  myservo.write(degr);
+  steer(degree);
   digitalWrite(MOTOR_FORWARD, forward);
   digitalWrite(MOTOR_REVERSE, reverse);
   analogWrite(DUTY_CYCLE, duty);
 }
 
-//void steer(int pos_deg) {
-//  myservo.write(pos_deg);
-//}
+void steer(int degree) {
+  if (abs(degree - STRAIGHT) > MIN_STEER_DIFF){
+    if (degree > (STRAIGHT + HARD_TURN)) {
+      degree = STRAIGHT + HARD_TURN;
+    } else if (degree < (STRAIGHT - HARD_TURN)) {
+      degree = STRAIGHT - HARD_TURN;
+    }
+    myservo.write(degree);
+  }
+}
 
 //////---STEERING ANGLE SIMPLE--//////
 //double courseDiff(double curAngle, double destAngle) {
@@ -320,6 +283,16 @@ void drive(int dir, int spd, int degr) {
 //}
 
 //////////----RANGE FINDER/OBSTACLE STUFF----////////////
+//void measureObsDistance() {
+//  ultrasonic_right.DistanceMeasure(); // get the current signal time;
+//  ultrasonic_left.DistanceMeasure(); // get the current signal time;
+//
+//  obsCmLeft = ultrasonic_left.microsecondsToCentimeters();
+//  obsCmRight = ultrasonic_right.microsecondsToCentimeters();
+//  curSpeed = calculateSpeed(obsCmLeft, obsCmRight);
+//  angle = calculateDirection(obsCmLeft, obsCmRight);
+//}
+//
 //double calculateSpeed(long rangeCmL, long rangeCmR) {
 //  if (rangeCmL > rangeCmR) {
 //    return speedFromDist(rangeCmR);
@@ -375,52 +348,35 @@ boolean checkAchievementStatus() {
 //  return TinyGPSPlus::courseTo(lastLat, lastLon, nextLat, nextLon);
 //}
 
-
-// logging //
-void printGpsInfo() {
-  Serial.print("Lat, Long): "); Serial.print(curLat , 6); Serial.print(", "); Serial.print(curLng, 6);
-  Serial.print(", WP Lat, WP Long): "); Serial.print(nextLat, 6); Serial.print(", "); Serial.print(nextLon, 6);
-  Serial.print(", Unlocked?:"); Serial.print(checkAchievementStatus());
-  Serial.print(", WP#:"); Serial.print(curWayPoint);
-//  Serial.print(", Dist2WP:"); Serial.print(distToWayPointM());
-// Serial.print(", Cur Angle:"); Serial.print(gps.course.deg());
-//  Serial.print(", Angle2WP: "); Serial.print(courseToWayPoint());
-  }
-
-
-
 //////////////////////////////////////////---compass stuff---//////////////////////////////////////////
 
-
-
-void config(void)
+void initCompass(void)
 {
   Wire.beginTransmission(MAG_ADDR); // transmit to device 0x0E
-  Wire.write(0x11);              // cntrl register2
-  Wire.write(0x80);              // send 0x80, enable auto resets
-  Wire.endTransmission();       // stop transmitting
+  Wire.write(0x11);                 // cntrl register2
+  Wire.write(0x80);                 // send 0x80, enable auto resets
+  Wire.endTransmission();           // stop transmitting
 
   delay(15);
 
   Wire.beginTransmission(MAG_ADDR); // transmit to device 0x0E
-  Wire.write(0x10);              // cntrl register1
-  Wire.write(1);                 // send 0x01, active mode
-  Wire.endTransmission();       // stop transmitting
+  Wire.write(0x10);                 // cntrl register1
+  Wire.write(1);                    // send 0x01, active mode
+  Wire.endTransmission();           // stop transmitting
 }
 
-void print_values(void)
+void logOutput(void)
 {
-//  Serial.print("x=");
-//  Serial.print(readX());
-//  Serial.print(",");
-//  Serial.print("y=");
-//  Serial.print(readY());
-//  Serial.print(", ycal = ");
-//  Serial.print(Ycal);
-//  Serial.print(", xcal = ");
-//  Serial.print(Xcal);
-//  Serial.print(", angle");
-//  Serial.print(Nangle);
+  // Serial.print("x=");
+  // Serial.print(readX());
+  // Serial.print(",");
+  // Serial.print("y=");
+  // Serial.print(readY());
+  // Serial.print(", ycal = ");
+  // Serial.print(Ycal);
+  // Serial.print(", xcal = ");
+  // Serial.print(Xcal);
+  // Serial.print(", angle");
   Serial.print(", angle to next : ");
   Serial.print(AngleNext);
   Serial.print(", Steering angle : ");
@@ -429,43 +385,44 @@ void print_values(void)
   Serial.print(angleFromStraight);
   Serial.print(",  direction l or r : ");
   Serial.print(DirectionNext);
-    Serial.print(", NextVectorY = ");
+  Serial.print(", NextVectorY = ");
   Serial.print(NextVectorY, 6);
-     Serial.print(", NextVectorX = ");
+  Serial.print(", NextVectorX = ");
   Serial.println(NextVectorX, 6);
-       Serial.print(", curWayPoint = ");
+  Serial.print(", curWayPoint = ");
   Serial.println(curWayPoint);
+  // Serial.print("Lat, Long): "); Serial.print(curLat , 6); Serial.print(", "); Serial.print(curLng, 6);
+  // Serial.print(", WP Lat, WP Long): "); Serial.print(nextLat, 6); Serial.print(", "); Serial.print(nextLon, 6);
+  // Serial.print(", Unlocked?:"); Serial.print(checkAchievementStatus());
+  // Serial.print(", WP#:"); Serial.print(curWayPoint);
+  // Serial.print(", Dist2WP:"); Serial.print(distToWayPointM());
+  // Serial.print(", Cur Angle:"); Serial.print(gps.course.deg());
+  // Serial.print(", Angle2WP: "); Serial.print(courseToWayPoint());
 }
 
 
 
-int readX(void)
-{
+int readX(void) {
   int xl, xh;  //define the MSB and LSB
 
   Wire.beginTransmission(MAG_ADDR); // transmit to device 0x0E
   Wire.write(0x01);              // x MSB reg
   Wire.endTransmission();       // stop transmitting
-
   delayMicroseconds(2); //needs at least 1.3us free time between start and stop
 
   Wire.requestFrom(MAG_ADDR, 1); // request 1 byte
-  while(Wire.available())    // slave may send less than requested
-  {
+  while(Wire.available()) {   // slave may send less than requested
     xh = Wire.read(); // receive the byte
   }
-
   delayMicroseconds(2); //needs at least 1.3us free time between start and stop
 
   Wire.beginTransmission(MAG_ADDR); // transmit to device 0x0E
   Wire.write(0x02);              // x LSB reg
   Wire.endTransmission();       // stop transmitting
-
   delayMicroseconds(2); //needs at least 1.3us free time between start and stop
 
   Wire.requestFrom(MAG_ADDR, 1); // request 1 byte
-  while(Wire.available())    // slave may send less than requested
-  {
+  while(Wire.available()) {   // slave may send less than requested
     xl = Wire.read(); // receive the byte
   }
 
@@ -484,8 +441,7 @@ int readY(void)
   delayMicroseconds(2); //needs at least 1.3us free time between start and stop
 
   Wire.requestFrom(MAG_ADDR, 1); // request 1 byte
-  while(Wire.available())    // slave may send less than requested
-  {
+  while(Wire.available()) {   // slave may send less than requested
     yh = Wire.read(); // receive the byte
   }
 
@@ -498,8 +454,7 @@ int readY(void)
   delayMicroseconds(2); //needs at least 1.3us free time between start and stop
 
   Wire.requestFrom(MAG_ADDR, 1); // request 1 byte
-  while(Wire.available())    // slave may send less than requested
-  {
+  while(Wire.available()) {  // slave may send less than requested
     yl = Wire.read(); // receive the byte
   }
 
