@@ -12,7 +12,6 @@
 
 
 // pins:
-//
 //int const RANGE_LEFT = 7, RANGE_RIGHT = 8;
 int const MOTOR_FORWARD = 4, MOTOR_REVERSE = 6, DUTY_CYCLE = 13;
 int const SERVO = 9;
@@ -27,57 +26,34 @@ int const READ_FREQ_MS = 500;
 int const WAY_POINT_RADIUS_CM = 1;
 int const FORWARD = 1, STOP = 0, REVERSE = -1;
 int const STRAIGHT = 130, SOFT_TURN = 10, HARD_TURN = 20;
-int const MIN_STEER_DIFF = 5;
-double const MAX_SPEED = 20.0;
+int const MIN_STEER_DIFF = 2;
+double const MAX_SPEED = 30.0;
 
 // dist and angle calculations
 float const LAT_TO_METERS = 111034.0, LNG_TO_METERS = 85393.0;
 float const Y_SCALE = 0.00926, X_SCALE = 0.0118;
 int const Y_OFF = 1456, X_OFF = -1621;
+int const COMPASS_CORRECTION = 0;
 
 
-int const WAY_POINT_RADIUS_M = 10; //
+int const WAY_POINT_RADIUS_M = 7; //
 
-float wayPointsx[7][2] = {
-  {39.924052, -105.153167},
-  {39.924233, -105.153139},
-  {39.924391, -105.153170},
-  {39.924553, -105.153291},
-  {39.924552, -105.153080}
-};
-
-float wayPoints[5][2] = {
-  {39.92064, -105.162074},
-  {39.92064, -105.1617719},
-  {39.92083, -105.161889},
-  {39.92074, -105.1621931},
-  {39.92055, -105.162074}
-};
-
-float wayPoints2[5][2] = {
-  {39.920641, -105.162074},
-  {39.920641, -105.161889},
-  {39.920735, -105.161889},
-  {39.920735, -105.162076},
-  {39.920641, -105.162074}
-};
-
-float wayPoints3[8][2] = {
-  {39.920521, -105.16198},
-  {39.920591, -105.16198},
-  {39.920641, -105.161889},
-  {39.920735, -105.161889},
-  {39.920735, -105.162076},
-  {39.920641, -105.162074},
-  {39.920591, -105.16198},
-  {39.920521, -105.16198}
-};
-
-float wayPoints4[5][2] = {
+float wayPoints[16][2] = {
   {39.92118, -105.160636},
-  {39.920938, -105.160239},
-  {39.921011, -105.1599},
+  {39.920994, -105.160387},
   {39.921091, -105.160126},
+  {39.921011, -105.1599},
+  {39.920938, -105.160239},
+  {39.921166, -105.160492},
+  {39.92118, -105.160636},
+  {39.921279, -105.160646},
+  {39.92125, -105.160759},
+  {39.920981, -105.160695},
+  {39.920829, -105.160557},
+  {39.920731, -105.16035},
+  {39.920764, -105.160198},
+  {39.92094, -105.160225},
+  {39.921008, -105.160498},
   {39.92118, -105.160636}
 };
 
@@ -89,7 +65,7 @@ int curSpeed = 0;
 int angle = STRAIGHT;
 int dir = 1;
 
-double DIFF_THRESH = 0.0002;
+double DIFF_THRESH = 0.0005;
 double gpsdiffLat = 0.0;
 double gpsdiffLng = 0.0;
 ///////////////////--compass stuff--////
@@ -179,9 +155,8 @@ void loop() {
 
   // measureObsDistance();
   //  distToWayPointM();
-  // double correctCourse = courseDiff(gps.course.deg(), courseToWayPoint());
 
-  drive(1, 25, angleToWP());
+  drive(1, MAX_SPEED, angleToWP());
   logOutput();
   delay(50);
   Serial.println();
@@ -203,18 +178,20 @@ int angleToWP() {
   //Magnitude of compass vector for finding angle
   MagComp =  sqrt(square(xCal) + square(yCal));
 
-  // Dot product of next vector and current direction(negative 1 multiply is because compass reading is “how many degrees  NORTH is FROM CAR pointing direction, we want how many degree car is FROM NORTH we are pointing)..
+  // Dot product of next vector and current direction(negative 1 multiply is
+  // because compass reading is “how many degrees  NORTH is FROM CAR pointing
+  // direction, we want how many degree car is FROM NORTH we are pointing)..
   CompDotNext = (-1 * xCal * NextVectorX) + (yCal * NextVectorY);
 
-  // Cos^-1((A*B)/||A|| ||B||)--- Magnitude of angle(in radians to next way point from current direction car is pointed.
+  // Cos^-1((A*B)/||A|| ||B||)--- Magnitude of angle(in radians to next
+  // way point from current direction car is pointed.
   AngleNext = acos(CompDotNext/(MagComp*distToNext)) * 180 / 3.14;
 
   //if negative turn left, if positive turn right //if negative turn left, if positive turn right
-  DirectionNext = ((xCal * NextVectorX) - (yCal * NextVectorY));
+  DirectionNext = ((yCal * NextVectorX) - (-1 * xCal * NextVectorY)) + COMPASS_CORRECTION;
   DirectionNext = DirectionNext / abs(DirectionNext) * -1;
 
-  //copysign( AngleNext, DirectionNext-12 );
-  return STRAIGHT + (DirectionNext * AngleNext);
+  return STRAIGHT + (DirectionNext * (AngleNext));
 }
 
 void updateGps() {
@@ -236,8 +213,6 @@ void updateGps() {
 
 ////OUTPUT TO CAR/////
 void drive(int dir, int spd, int degree) {
-  // Serial.print("speed: ");
-  // Serial.println(spd);
   float duty = (spd / 100.00) * 255.00;
   boolean forward, reverse;
 
@@ -260,6 +235,7 @@ void drive(int dir, int spd, int degree) {
 }
 
 void steer(int degree) {
+  // degree = degree / 2;
   if (abs(degree - STRAIGHT) > MIN_STEER_DIFF){
     if (degree > (STRAIGHT + HARD_TURN)) {
       degree = STRAIGHT + HARD_TURN;
@@ -269,18 +245,6 @@ void steer(int degree) {
     myservo.write(degree);
   }
 }
-
-//////---STEERING ANGLE SIMPLE--//////
-//double courseDiff(double curAngle, double destAngle) {
-//  double diff = destAngle - curAngle;
-//  double absDiff = abs(diff);
-//
-//  if (destAngle > curAngle) {
-//    return absDiff - 360;
-//  } else {
-//    return 360 - absDiff;
-//  }
-//}
 
 //////////----RANGE FINDER/OBSTACLE STUFF----////////////
 //void measureObsDistance() {
@@ -377,25 +341,25 @@ void logOutput(void)
   // Serial.print(", xcal = ");
   // Serial.print(Xcal);
   // Serial.print(", angle");
-  Serial.print(", angle to next : ");
-  Serial.print(AngleNext);
-  Serial.print(", Steering angle : ");
-  Serial.print(Steering);
-  Serial.print(", angleFromStraight : ");
-  Serial.print(angleFromStraight);
-  Serial.print(",  direction l or r : ");
-  Serial.print(DirectionNext);
-  Serial.print(", NextVectorY = ");
-  Serial.print(NextVectorY, 6);
-  Serial.print(", NextVectorX = ");
-  Serial.println(NextVectorX, 6);
-  Serial.print(", curWayPoint = ");
+  // Serial.print(", angle to next : ");
+  // Serial.print(AngleNext);
+  // Serial.print(", Steering angle : ");
+  // Serial.print(Steering);
+  // Serial.print(", angleFromStraight : ");
+  // Serial.print(angleFromStraight);
+  // Serial.print(",  direction l or r : ");
+  // Serial.print(DirectionNext);
+  // Serial.print(", NextVectorY = ");
+  // Serial.print(NextVectorY, 6);
+  // Serial.print(", NextVectorX = ");
+  // Serial.println(NextVectorX, 6);
+  // Serial.print(", curWayPoint = ");
   Serial.println(curWayPoint);
   // Serial.print("Lat, Long): "); Serial.print(curLat , 6); Serial.print(", "); Serial.print(curLng, 6);
   // Serial.print(", WP Lat, WP Long): "); Serial.print(nextLat, 6); Serial.print(", "); Serial.print(nextLon, 6);
   // Serial.print(", Unlocked?:"); Serial.print(checkAchievementStatus());
   // Serial.print(", WP#:"); Serial.print(curWayPoint);
-  // Serial.print(", Dist2WP:"); Serial.print(distToWayPointM());
+  Serial.print(", Dist2WP:"); Serial.print(distToNext);
   // Serial.print(", Cur Angle:"); Serial.print(gps.course.deg());
   // Serial.print(", Angle2WP: "); Serial.print(courseToWayPoint());
 }
