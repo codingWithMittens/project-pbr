@@ -35,6 +35,8 @@ float const LAT_TO_METERS = 111034.0, LNG_TO_METERS = 85393.0;
 float const Y_SCALE = 0.00926, X_SCALE = 0.0118;
 int const Y_OFF = 1456, X_OFF = -1621;
 int const COMPASS_CORRECTION = 0;
+double const METERS_PER_REV = 0.0726;
+double xCal, yCal;
 
 int const WAY_POINT_RADIUS_M = 5; //
 float const WAY_POINTS[5][2] = {
@@ -44,7 +46,6 @@ float const WAY_POINTS[5][2] = {
   {39.920938, -105.160239},
   {39.92118, -105.160636}
 };
-
 
 // {39.921011, -105.1599},
   // {39.921166, -105.160492},
@@ -63,8 +64,10 @@ int curWayPoint = 0;
 
 float lastLat = WAY_POINTS[curWayPoint][0];
 float lastLon = WAY_POINTS[curWayPoint][1];
-float nextLat = WAY_POINTS[curWayPoint][0];
-float nextLon = WAY_POINTS[curWayPoint][1];
+float nextLat = lastLat;
+float nextLon = lastLon;
+float revLat = lastLat;
+float revLon = lastLon;
 
 long obsCmLeft;
 long obsCmRight;
@@ -94,6 +97,8 @@ int LeftLimit = 70;
 int RightLimit = 110;
 float angleFromStraight = 0.0;
 
+volatile int revCount = 0;
+
 ///////////////////////////
 
 Adafruit_GPS GPS(&Serial1);
@@ -110,6 +115,7 @@ void setup() {
   Serial.begin(115200);
   initGPS();
   initComp();
+  attachRevInt();
   }
 //--compass stuff--///
 
@@ -118,7 +124,28 @@ void initComp(){
   Serial.begin(9600);  // start serial for output
   initCompass();            // turn the MAG3110 on
 }
-////////////////
+
+////////////////Rev counter stuff////////////
+
+void attachRevInt() {
+  attachInterrupt(0, countRevs, FALLING); //enable interrupt
+}
+
+void updateRevLocation() {
+  double distTraveledM = revCount * METERS_PER_REV;
+
+  revLat += (yCal * distTraveledM * (1 / LAT_TO_METERS));
+  revLon += (xCal * distTraveledM * (1 / LNG_TO_METERS));
+
+  revCount = 0;
+}
+
+void countRevs() { // this code will be executed every time the interrupt 0 (pin2) gets low.
+  revCount++;
+}
+
+//////////////////////
+
 void initGPS() {
   GPS.begin(9600);
   GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);
@@ -152,6 +179,7 @@ uint32_t timer = millis();
 void loop() {
   updateGps();
   checkAchievementStatus();
+  updateRevLocation();
 
   int curAngle = angleToWP();
   // int steerAroundObs = overrideDir();
@@ -161,6 +189,7 @@ void loop() {
   // }
 
   drive(FORWARD, MAX_SPEED, curAngle);
+
   logOutput();
   delay(50);
   Serial.println();
@@ -168,8 +197,8 @@ void loop() {
 
 
 int angleToWP() {
-  double yCal = (readY() - Y_OFF) * Y_SCALE;
-  double xCal = (readX() - X_OFF) * X_SCALE;
+  yCal = (readY() - Y_OFF) * Y_SCALE;
+  xCal = (readX() - X_OFF) * X_SCALE;
 
   delay(20);
 
