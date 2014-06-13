@@ -1,5 +1,5 @@
 #include "Arduino.h"
-//#include "Ultrasonic.h"
+#include "Ultrasonic.h"
 #include "Adafruit_GPS.h"
 #include "SoftwareSerial.h"
 #include "TinyGPS++.h"
@@ -12,7 +12,7 @@
 
 
 // pins:
-//int const RANGE_LEFT = 7, RANGE_RIGHT = 8;
+int const RANGE_LEFT = 7, RANGE_RIGHT = 8;
 int const MOTOR_FORWARD = 4, MOTOR_REVERSE = 6, DUTY_CYCLE = 13;
 int const SERVO = 9;
 int const COMPASS_SCL = 21, COMPASS_SDA = 20;
@@ -23,11 +23,12 @@ int const REV_COUNT = 3;
 // configuration:
 double const STOP_DIST_CM = 75.0, SLOW_DIST_CM = 125.0, REVERSE_DIST_CM = 125.0;
 int const READ_FREQ_MS = 500;
-int const WAY_POINT_RADIUS_CM = 1;
+// int const WAY_POINT_RADIUS_CM = 1;
 int const FORWARD = 1, STOP = 0, REVERSE = -1;
-int const STRAIGHT = 130, SOFT_TURN = 10, HARD_TURN = 20;
-int const MIN_STEER_DIFF = 2;
-double const MAX_SPEED = 30.0;
+int const STRAIGHT = 130, SOFT_TURN = 10, HARD_TURN = 10;
+int const MIN_STEER_DIFF = 1;
+double const MAX_SPEED = 50.0;
+double GPS_DIFF_THRESH = 0.0005;
 
 // dist and angle calculations
 float const LAT_TO_METERS = 111034.0, LNG_TO_METERS = 85393.0;
@@ -35,37 +36,42 @@ float const Y_SCALE = 0.00926, X_SCALE = 0.0118;
 int const Y_OFF = 1456, X_OFF = -1621;
 int const COMPASS_CORRECTION = 0;
 
-
-int const WAY_POINT_RADIUS_M = 7; //
-
-float wayPoints[16][2] = {
+int const WAY_POINT_RADIUS_M = 5; //
+float const WAY_POINTS[5][2] = {
   {39.92118, -105.160636},
   {39.920994, -105.160387},
   {39.921091, -105.160126},
-  {39.921011, -105.1599},
   {39.920938, -105.160239},
-  {39.921166, -105.160492},
-  {39.92118, -105.160636},
-  {39.921279, -105.160646},
-  {39.92125, -105.160759},
-  {39.920981, -105.160695},
-  {39.920829, -105.160557},
-  {39.920731, -105.16035},
-  {39.920764, -105.160198},
-  {39.92094, -105.160225},
-  {39.921008, -105.160498},
   {39.92118, -105.160636}
 };
 
+
+// {39.921011, -105.1599},
+  // {39.921166, -105.160492},
+
+ // {39.921279, -105.160646},
+ //  {39.92125, -105.160759},
+ //  {39.920981, -105.160695},
+ //  {39.920829, -105.160557},
+ //  {39.920731, -105.16035},
+ //  {39.920764, -105.160198},
+ //  {39.92094, -105.160225},
+ //  {39.921008, -105.160498},
+ //  {39.92118, -105.160636}
+
 int curWayPoint = 0;
 
-//long obsCmLeft;
-//long obsCmRight;
+float lastLat = WAY_POINTS[curWayPoint][0];
+float lastLon = WAY_POINTS[curWayPoint][1];
+float nextLat = WAY_POINTS[curWayPoint][0];
+float nextLon = WAY_POINTS[curWayPoint][1];
+
+long obsCmLeft;
+long obsCmRight;
 int curSpeed = 0;
 int angle = STRAIGHT;
 int dir = 1;
 
-double DIFF_THRESH = 0.0005;
 double gpsdiffLat = 0.0;
 double gpsdiffLng = 0.0;
 ///////////////////--compass stuff--////
@@ -83,12 +89,6 @@ float DirectionNext;
 double curLat = 0.0;
 double curLng = 0.0;
 
-float lastLat = wayPoints[curWayPoint][0];
-float lastLon = wayPoints[curWayPoint][1];
-
-float nextLat = wayPoints[curWayPoint][0];
-float nextLon = wayPoints[curWayPoint][1];
-
 int Steering;
 int LeftLimit = 70;
 int RightLimit = 110;
@@ -102,8 +102,8 @@ Adafruit_GPS GPS(&Serial1);
 TinyGPSPlus gps;
 Servo myservo;
 
-//Ultrasonic ultrasonic_left(RANGE_LEFT);
-//Ultrasonic ultrasonic_right(RANGE_RIGHT);
+Ultrasonic ultrasonic_left(RANGE_LEFT);
+Ultrasonic ultrasonic_right(RANGE_RIGHT);
 
 void setup() {
   setPinModes();
@@ -153,10 +153,14 @@ void loop() {
   updateGps();
   checkAchievementStatus();
 
-  // measureObsDistance();
-  //  distToWayPointM();
+  int curAngle = angleToWP();
+  // int steerAroundObs = overrideDir();
 
-  drive(1, MAX_SPEED, angleToWP());
+  // if (steerAroundObs > -1) {
+  //   curAngle = steerAroundObs;
+  // }
+
+  drive(FORWARD, MAX_SPEED, curAngle);
   logOutput();
   delay(50);
   Serial.println();
@@ -191,7 +195,7 @@ int angleToWP() {
   DirectionNext = ((yCal * NextVectorX) - (-1 * xCal * NextVectorY)) + COMPASS_CORRECTION;
   DirectionNext = DirectionNext / abs(DirectionNext) * -1;
 
-  return STRAIGHT + (DirectionNext * (AngleNext));
+  return STRAIGHT + (DirectionNext * AngleNext);
 }
 
 void updateGps() {
@@ -203,8 +207,8 @@ void updateGps() {
    gpsdiffLng = (lastLon - curLng);
 
    //Check to see if new coordinates are close enough to the last
-   if ( (gpsdiffLat < DIFF_THRESH) && (gpsdiffLng < DIFF_THRESH) &&
-       (gpsdiffLat > -1 * DIFF_THRESH) && (gpsdiffLng > -1 * DIFF_THRESH)) {
+   if ( (gpsdiffLat < GPS_DIFF_THRESH) && (gpsdiffLng < GPS_DIFF_THRESH) &&
+       (gpsdiffLat > -1 * GPS_DIFF_THRESH) && (gpsdiffLng > -1 * GPS_DIFF_THRESH)) {
      lastLat = curLat; //designates new coordinates as accepted.
      lastLon = curLng;
    }
@@ -215,6 +219,10 @@ void updateGps() {
 void drive(int dir, int spd, int degree) {
   float duty = (spd / 100.00) * 255.00;
   boolean forward, reverse;
+
+  if(curWayPoint == 5) {
+    dir = 0;
+  }
 
   if(dir == 1) {
     forward = HIGH;
@@ -247,51 +255,49 @@ void steer(int degree) {
 }
 
 //////////----RANGE FINDER/OBSTACLE STUFF----////////////
-//void measureObsDistance() {
-//  ultrasonic_right.DistanceMeasure(); // get the current signal time;
-//  ultrasonic_left.DistanceMeasure(); // get the current signal time;
-//
-//  obsCmLeft = ultrasonic_left.microsecondsToCentimeters();
-//  obsCmRight = ultrasonic_right.microsecondsToCentimeters();
-//  curSpeed = calculateSpeed(obsCmLeft, obsCmRight);
-//  angle = calculateDirection(obsCmLeft, obsCmRight);
-//}
-//
-//double calculateSpeed(long rangeCmL, long rangeCmR) {
+int overrideDir() {
+ ultrasonic_right.DistanceMeasure(); // get the current signal time;
+ ultrasonic_left.DistanceMeasure(); // get the current signal time;
+
+ obsCmLeft = ultrasonic_left.microsecondsToCentimeters();
+ obsCmRight = ultrasonic_right.microsecondsToCentimeters();
+ return calculateDirection(obsCmLeft, obsCmRight);
+}
+
+// double calculateSpeed(long rangeCmL, long rangeCmR) {
 //  if (rangeCmL > rangeCmR) {
 //    return speedFromDist(rangeCmR);
 //  } else {
 //    return speedFromDist(rangeCmL);
 //  }
-//}
-//
-//double speedFromDist(long nextObstacleCm) {
+// }
+
+// double speedFromDist(long nextObstacleCm) {
 //  if (nextObstacleCm > SLOW_DIST_CM) {
 //    return MAX_SPEED;
 //  } else {
 //    // Serial.println(MAX_SPEED * (nextObstacleCm / SLOW_DIST_CM));
 //    return MAX_SPEED * (nextObstacleCm / SLOW_DIST_CM);
 //  }
-//}
-//
-//int calculateDirection(long rangeCmL, long rangeCmR) {
-//  long nextObstacleCm = (rangeCmL > rangeCmR) ? rangeCmR : rangeCmL;
-//  // long rangeDiff = fabs(rangeCmL - rangeCmR);
-//  long nextObjDir = rangeCmL > rangeCmR ? -1 : 1;
-//  if (nextObstacleCm < SLOW_DIST_CM) {
-//    return STRAIGHT + ((HARD_TURN * ((SLOW_DIST_CM - nextObstacleCm) / SLOW_DIST_CM)) * nextObjDir);
-//  } else {
-//    return STRAIGHT;
-//  }
-//}
+// }
+
+int calculateDirection(long rangeCmL, long rangeCmR) {
+ long nextObstacleCm = (rangeCmL > rangeCmR) ? rangeCmR : rangeCmL;
+ long nextObjDir = rangeCmL > rangeCmR ? -1 : 1;
+ if (nextObstacleCm < SLOW_DIST_CM) {
+   return STRAIGHT + ((HARD_TURN * ((SLOW_DIST_CM - nextObstacleCm) / SLOW_DIST_CM)) * nextObjDir);
+ } else {
+   return -1;
+ }
+}
 ///////////////////////////////////////////////////////////////
 
 ////////--- REACHED WAY POINT?---////////////
 boolean checkAchievementStatus() {
   if(distToNext < WAY_POINT_RADIUS_M) {
     curWayPoint += 1;
-    nextLat = wayPoints[curWayPoint][0];
-    nextLon = wayPoints[curWayPoint][1];
+    nextLat = WAY_POINTS[curWayPoint][0];
+    nextLon = WAY_POINTS[curWayPoint][1];
     return true;
   } else {
     return false;
@@ -355,7 +361,7 @@ void logOutput(void)
   // Serial.println(NextVectorX, 6);
   // Serial.print(", curWayPoint = ");
   Serial.println(curWayPoint);
-  // Serial.print("Lat, Long): "); Serial.print(curLat , 6); Serial.print(", "); Serial.print(curLng, 6);
+  Serial.print("Lat, Long): "); Serial.print(curLat , 6); Serial.print(", "); Serial.print(curLng, 6);
   // Serial.print(", WP Lat, WP Long): "); Serial.print(nextLat, 6); Serial.print(", "); Serial.print(nextLon, 6);
   // Serial.print(", Unlocked?:"); Serial.print(checkAchievementStatus());
   // Serial.print(", WP#:"); Serial.print(curWayPoint);
