@@ -1,3 +1,9 @@
+// pbr_closedloopsteering.ino
+
+//proportional closed loop steering control::
+
+
+// pbr_everything.ino
 #include "Arduino.h"
 #include "Ultrasonic.h"
 #include "Adafruit_GPS.h"
@@ -26,48 +32,46 @@ int const READ_FREQ_MS = 500;
 // int const WAY_POINT_RADIUS_CM = 1;
 int const FORWARD = 1, STOP = 0, REVERSE = -1;
 int const STRAIGHT = 130, SOFT_TURN = 10, HARD_TURN = 10;
-int const MIN_STEER_DIFF = 1;
-double const MAX_SPEED = 50.0;
-double GPS_DIFF_THRESH = 0.0005;
+int const MIN_STEER_DIFF = 0;
+double const MAX_SPEED = 30.0;
+double const SLOW_SPEED = 25.0;
+double GPS_DIFF_THRESH = 5.0;  //now in meters
 
 // dist and angle calculations
 float const LAT_TO_METERS = 111034.0, LNG_TO_METERS = 85393.0;
-float const Y_SCALE = 0.00926, X_SCALE = 0.0118;
-int const Y_OFF = 1456, X_OFF = -1621;
+float const Y_SCALE = 0.0039, X_SCALE = 0.0045;
+int const Y_OFF = 1379, X_OFF = -1689;
 int const COMPASS_CORRECTION = 0;
-double const METERS_PER_REV = 0.0726;
+double const METERS_PER_REV = 0.036;
 double xCal, yCal;
+double xCali, yCali; //intermediate calibrated values
+double const TH_OFF = 4*(3.14/180); // physical offset of magnetometer [degrees]
 
-int const WAY_POINT_RADIUS_M = 5; //
+int const WAY_POINT_RADIUS_M = 4; //
+int const WAY_PT_Q = 5; //number of waypoints
+
+
 float const WAY_POINTS[5][2] = {
-  {39.92118, -105.160636},
-  {39.920994, -105.160387},
-  {39.921091, -105.160126},
-  {39.920938, -105.160239},
-  {39.92118, -105.160636}
-};
+{39.982355, -105.240465},
+{39.982332, -105.240297},
+{39.982431, -105.240281},
+{39.982449, -105.240446},
+{39.982355, -105.240465}
+}; //summit parking lot
 
-// {39.921011, -105.1599},
-  // {39.921166, -105.160492},
 
- // {39.921279, -105.160646},
- //  {39.92125, -105.160759},
- //  {39.920981, -105.160695},
- //  {39.920829, -105.160557},
- //  {39.920731, -105.16035},
- //  {39.920764, -105.160198},
- //  {39.92094, -105.160225},
- //  {39.921008, -105.160498},
- //  {39.92118, -105.160636}
 
 int curWayPoint = 0;
 
-float lastLat = WAY_POINTS[curWayPoint][0];
-float lastLon = WAY_POINTS[curWayPoint][1];
+// float lastLat = WAY_POINTS[curWayPoint][0];
+// float lastLon = WAY_POINTS[curWayPoint][1];
+float lastLat = 0.0;
+float lastLon = 0.0;
 float nextLat = lastLat;
 float nextLon = lastLon;
-float revLat = lastLat;
-float revLon = lastLon;
+float lastLatRev;
+float lastLonRev;
+float const REV_WEIGHT = 0.0;
 
 long obsCmLeft;
 long obsCmRight;
@@ -84,7 +88,7 @@ float NextVectorX;
 float NextVectorY;
 
 float distToNext;
-float MagComp;
+float MagComp = 1.0;
 float CompDotNext;
 float AngleNext;
 float DirectionNext;
@@ -96,6 +100,9 @@ int Steering;
 int LeftLimit = 70;
 int RightLimit = 110;
 float angleFromStraight = 0.0;
+int curAngle = STRAIGHT;
+int driveAngle;
+
 
 volatile int revCount = 0;
 
@@ -116,6 +123,7 @@ void setup() {
   initGPS();
   initComp();
   attachRevInt();
+  updateRevLocation();
   }
 //--compass stuff--///
 
@@ -134,8 +142,10 @@ void attachRevInt() {
 void updateRevLocation() {
   double distTraveledM = revCount * METERS_PER_REV;
 
-  revLat += (yCal * distTraveledM * (1 / LAT_TO_METERS));
-  revLon += (xCal * distTraveledM * (1 / LNG_TO_METERS));
+  lastLat += (yCal * distTraveledM * (1 / MagComp));
+  lastLon += (-1* xCal * distTraveledM * (1 / MagComp));
+  lastLatRev = lastLat;
+  lastLonRev = lastLon;
 
   revCount = 0;
 }
@@ -181,29 +191,48 @@ void loop() {
   checkAchievementStatus();
   updateRevLocation();
 
-  int curAngle = angleToWP();
-  // int steerAroundObs = overrideDir();
+  driveAngle = steerLoop();
 
-  // if (steerAroundObs > -1) {
-  //   curAngle = steerAroundObs;
-  // }
 
-  drive(FORWARD, MAX_SPEED, curAngle);
+  int steerAroundObs = overrideDir();
+
+  double safeSpeed = MAX_SPEED;
+  if (steerAroundObs > -1) {
+    curAngle = steerAroundObs;
+    safeSpeed = SLOW_SPEED;
+   }
+
+  drive(FORWARD, safeSpeed, driveAngle);
 
   logOutput();
-  delay(50);
-  Serial.println();
+  //delay(50);
+  //Serial.println();
 }
 
+int steerLoop() {
+
+    float const GAIN_STEER = 1; // gain to add to steering angle
+    float angleToWPnow = angleToWP() ;// call angle to way point so it doesnt call it every time in calc.
+
+    if ((curAngle > (STRAIGHT - 10)) && (curAngle < (STRAIGHT + 10))) {
+    curAngle = curAngle  + GAIN_STEER * angleToWPnow;
+    } else  {
+    curAngle = STRAIGHT + angleToWPnow;
+    }
+    return curAngle;
+}
 
 int angleToWP() {
-  yCal = (readY() - Y_OFF) * Y_SCALE;
-  xCal = (readX() - X_OFF) * X_SCALE;
+  yCali = (readY() - Y_OFF) * Y_SCALE;
+  xCali = (readX() - X_OFF) * X_SCALE;
 
-  delay(20);
+  xCal = xCali * cos(TH_OFF) - yCali * sin(TH_OFF);
+  yCal = xCali * sin(TH_OFF) + yCali * cos(TH_OFF);
 
-  NextVectorX = LNG_TO_METERS * (nextLon - lastLon);
-  NextVectorY = LAT_TO_METERS * (nextLat - lastLat);
+  //delay(20);
+
+  NextVectorX =  (nextLon - lastLon);
+  NextVectorY =  (nextLat - lastLat);
 
   //distance in meters from current position to next way point
   distToNext = sqrt(square(NextVectorY) + square(NextVectorX));
@@ -222,24 +251,30 @@ int angleToWP() {
 
   //if negative turn left, if positive turn right //if negative turn left, if positive turn right
   DirectionNext = ((yCal * NextVectorX) - (-1 * xCal * NextVectorY)) + COMPASS_CORRECTION;
-  DirectionNext = DirectionNext / abs(DirectionNext) * -1;
+  DirectionNext = DirectionNext / fabs(DirectionNext) * -1;
 
-  return STRAIGHT + (DirectionNext * AngleNext);
+  return (DirectionNext * AngleNext); //deleted "straight +"
+
 }
 
 void updateGps() {
  if (gps.location.isUpdated()){ //Looks for new GPS to start loop
-   curLat = (gps.location.lat()); //assigns newly updated latitude to "curLat" variable
-   curLng = (gps.location.lng()); // assigns newly updated longitude to "curLng" variable
+   curLat = ((gps.location.lat())- WAY_POINTS[0][0]) * LAT_TO_METERS; //assigns newly updated latitude to "curLat" variable
+   curLng = ((gps.location.lng())- WAY_POINTS[0][1]) * LNG_TO_METERS; // assigns newly updated longitude to "curLng" variable
 
-   gpsdiffLat = (lastLat - curLat); // calculate distance between last accepted coordinates and new coordinates
-   gpsdiffLng = (lastLon - curLng);
+   gpsdiffLat = fabs(lastLat - curLat); // calculate distance between last accepted coordinates and new coordinates
+   gpsdiffLng = fabs(lastLon - curLng);
 
    //Check to see if new coordinates are close enough to the last
-   if ( (gpsdiffLat < GPS_DIFF_THRESH) && (gpsdiffLng < GPS_DIFF_THRESH) &&
-       (gpsdiffLat > -1 * GPS_DIFF_THRESH) && (gpsdiffLng > -1 * GPS_DIFF_THRESH)) {
-     lastLat = curLat; //designates new coordinates as accepted.
-     lastLon = curLng;
+   if ( (gpsdiffLat < GPS_DIFF_THRESH) && (gpsdiffLng < GPS_DIFF_THRESH))// &&
+       // (gpsdiffLat > -1 * GPS_DIFF_THRESH) && (gpsdiffLng > -1 * GPS_DIFF_THRESH))
+{
+    detachInterrupt(0);
+
+     lastLat = (1-REV_WEIGHT * curLat) + (REV_WEIGHT * lastLatRev); //designates new coordinates as accepted.
+     lastLon = (1-REV_WEIGHT * curLng) + (REV_WEIGHT * lastLonRev);
+
+   attachInterrupt(0, countRevs, FALLING); //enable interrupt
    }
  }
 }
@@ -249,8 +284,8 @@ void drive(int dir, int spd, int degree) {
   float duty = (spd / 100.00) * 255.00;
   boolean forward, reverse;
 
-  if(curWayPoint == 5) {
-    dir = 0;
+  if(curWayPoint == WAY_PT_Q) {
+    duty = 0;
   }
 
   if(dir == 1) {
@@ -325,8 +360,9 @@ int calculateDirection(long rangeCmL, long rangeCmR) {
 boolean checkAchievementStatus() {
   if(distToNext < WAY_POINT_RADIUS_M) {
     curWayPoint += 1;
-    nextLat = WAY_POINTS[curWayPoint][0];
-    nextLon = WAY_POINTS[curWayPoint][1];
+    nextLat = (WAY_POINTS[curWayPoint][0] - WAY_POINTS[0][0]) * LAT_TO_METERS;
+    nextLon = (WAY_POINTS[curWayPoint][1] - WAY_POINTS[0][1]) * LNG_TO_METERS;
+
     return true;
   } else {
     return false;
@@ -366,6 +402,9 @@ void initCompass(void)
 
 void logOutput(void)
 {
+    int lastmilisprnt;
+    if ((millis()- lastmilisprnt) > 50) {
+         lastmilisprnt = millis();
   // Serial.print("x=");
   // Serial.print(readX());
   // Serial.print(",");
@@ -376,28 +415,40 @@ void logOutput(void)
   // Serial.print(", xcal = ");
   // Serial.print(Xcal);
   // Serial.print(", angle");
-  // Serial.print(", angle to next : ");
-  // Serial.print(AngleNext);
+  Serial.print(", angle to next : ");
+  Serial.print(AngleNext);
   // Serial.print(", Steering angle : ");
   // Serial.print(Steering);
-  // Serial.print(", angleFromStraight : ");
-  // Serial.print(angleFromStraight);
-  // Serial.print(",  direction l or r : ");
-  // Serial.print(DirectionNext);
+   // Serial.print(", angleFromStraight : "); //obs
+   // Serial.print(angleFromStraight);
+  Serial.print(",  direction l or r : ");
+  Serial.print(DirectionNext);
   // Serial.print(", NextVectorY = ");
   // Serial.print(NextVectorY, 6);
   // Serial.print(", NextVectorX = ");
-  // Serial.println(NextVectorX, 6);
-  // Serial.print(", curWayPoint = ");
-  Serial.println(curWayPoint);
-  Serial.print("Lat, Long): "); Serial.print(curLat , 6); Serial.print(", "); Serial.print(curLng, 6);
+  // Serial.print(NextVectorX, 6);
+
+  Serial.print(", lastlon = ");
+  Serial.print(lastLon);
+  Serial.print(", lastLat = ");
+  Serial.print(lastLat);
+  // Serial.print(", nextlon = ");
+  // Serial.print(nextLon);
+  // Serial.print(", nextLat = ");
+  // Serial.print(nextLat);
+  Serial.print(", curWayPoint = ");
+  Serial.print(curWayPoint);
+  //Serial.print("Lat, Long): "); Serial.print(curLat , 6); Serial.print(", "); Serial.print(curLng, 6);
   // Serial.print(", WP Lat, WP Long): "); Serial.print(nextLat, 6); Serial.print(", "); Serial.print(nextLon, 6);
   // Serial.print(", Unlocked?:"); Serial.print(checkAchievementStatus());
   // Serial.print(", WP#:"); Serial.print(curWayPoint);
-  Serial.print(", Dist2WP:"); Serial.print(distToNext);
-  // Serial.print(", Cur Angle:"); Serial.print(gps.course.deg());
+  Serial.print(" , Dist2WP:"); Serial.print(distToNext);
+   Serial.print(", Cur Angle:"); Serial.print(driveAngle);
   // Serial.print(", Angle2WP: "); Serial.print(courseToWayPoint());
+  Serial.println();
 }
+}
+
 
 
 
